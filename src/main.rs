@@ -1,6 +1,6 @@
+use core::fmt;
 use std::{
-    collections::HashMap,
-    io::{BufRead, BufReader},
+    collections::HashMap, fmt::Display, io::{BufRead, BufReader}
 };
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -34,14 +34,17 @@ impl Value {
             panic!("Value is not a symbol")
         }
     }
+}
 
-    fn to_string(&self) -> String {
-        match self {
+impl Display for Value {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let s = match self {
             Self::Num(i) => i.to_string(),
             Self::Op(ref s) | Self::Sym(ref s) => s.clone(),
             Self::Block(_) => "<Block>".to_string(),
             Self::Native(_) => "<Native>".to_string(),
-        }
+        };
+        write!(f, "{}", s)
     }
 }
 
@@ -50,7 +53,7 @@ struct NativeOp(fn(&mut Vm));
 
 impl PartialEq for NativeOp {
     fn eq(&self, other: &NativeOp) -> bool {
-        self.0 as *const fn() == other.0 as *const fn()
+        std::ptr::eq(self.0 as *const fn(), other.0 as *const fn())
     }
 }
 
@@ -68,9 +71,11 @@ struct Vm {
     blocks: Vec<Vec<Value>>,
 }
 
+type Primitive = fn(&mut Vm);
+
 impl Vm {
     fn new() -> Self {
-        let functions: [(&str, fn(&mut Vm)); 12] = [
+        let functions: Vec<(&str, Primitive)> = vec![
             ("+", add),
             ("-", sub),
             ("*", mul),
@@ -115,7 +120,7 @@ fn main() {
 
 fn parse_batch(source: impl BufRead) -> Vec<Value> {
     let mut vm = Vm::new();
-    for line in source.lines().flatten() {
+    for line in source.lines().map_while(Result::ok) {
         for word in line.split(" ") {
             parse_word(word, &mut vm);
         }
@@ -125,7 +130,7 @@ fn parse_batch(source: impl BufRead) -> Vec<Value> {
 
 fn parse_interactive() {
     let mut vm = Vm::new();
-    for line in std::io::stdin().lines().flatten() {
+    for line in std::io::stdin().lines().map_while(Result::ok) {
         for word in line.split(" ") {
             parse_word(word, &mut vm);
         }
@@ -145,8 +150,8 @@ fn parse_word(word: &str, vm: &mut Vm) {
     } else {
         let code = if let Ok(num) = word.parse::<i32>() {
             Value::Num(num)
-        } else if word.starts_with("/") {
-            Value::Sym(word[1..].to_string())
+        } else if let Some(name) = word.strip_prefix("/") {
+            Value::Sym(name.to_string())
         } else {
             Value::Op(word.to_string())
         };
@@ -162,7 +167,7 @@ fn eval(code: Value, vm: &mut Vm) {
     if let Value::Op(ref op) = code {
         let val = vm
             .find_var(op)
-            .expect(&format!("{op:?} is not a defined operation"));
+            .unwrap_or_else(|| panic!("{op:?} is not a defined operation"));
         match val {
             Value::Block(block) => {
                 vm.vars.push(HashMap::new());
@@ -228,7 +233,7 @@ fn op_def(vm: &mut Vm) {
 
 fn puts(vm: &mut Vm) {
     let value = vm.stack.pop().unwrap();
-    println!("{}", value.to_string());
+    println!("{}", value);
 }
 
 fn pop(vm: &mut Vm) {
